@@ -42,15 +42,17 @@ contracts/nest/SingelTokenVirtualRewarderUpgradeable.sol
 ## High severity issues
 
 
-- **Ineffective slippage protection allows sandwich attacks in `buybackTokenByV2()` function**
+- **Buyback function vulnerability in SingelTokenBuybackUpgradeable contract exposes users to sandwich attacks**
 
-  The `buybackTokenByV2()` function in the `SingelTokenBuybackUpgradeable` contract is meant to facilitate token buybacks using a DEX router. It calculates the expected output based on current market conditions and a user-defined slippage tolerance. However, the current implementation of slippage protection is flawed and leaves users exposed to sandwich attacks. The function computes the minimum output amount (`amountOutQuote`) within the same transaction as the swap execution. An attacker can manipulate the liquidity pool state right before the transaction, influencing the calculation. As a result, users could receive significantly fewer tokens than expected because the slippage is based on a potentially manipulated quote rather than an absolute minimum output amount.
+  The `buybackTokenByV2()` function within the `SingelTokenBuybackUpgradeable` contract, which facilitates token buybacks using a DEX router, is compromised in its current form. The function calculates the minimum expected output (`amountOutQuote`) and applies slippage tolerance based on the market conditions at the time of the transaction. However, this method fails to protect users from sandwich attacks due to two key vulnerabilities.
 
-For example, if Alice initiates a buyback with 1% slippage and expects 1000 tokens, an attacker can front-run her transaction, alter the price, and reduce the expected outcome to 800 tokens. The contract then applies the slippage to this new quote, leading Alice to receive fewer tokens than anticipated.
+Firstly, the calculation of `amountOutQuote` is based on the present state of the liquidity pool, which can be easily manipulated by attackers just before the transaction is executed. This allows attackers to manipulate prices by initiating front-running attacks. Secondly, the slippage is applied as a percentage of the dynamically calculated `amountOutQuote`, rather than an absolute minimum output amount that the user provides.
 
-To mitigate this, users should specify a minimum output amount directly rather than a percentage-based slippage. Additionally, an off-chain quoting mechanism could be implemented so users can determine an appropriate minimum output based on current market conditions. These steps would help protect users from sandwich attacks and unexpected slippage.
+In practice, this means an attacker can front-run and back-run a transaction, manipulating prices such that the user's transaction ends up being far less favorable than anticipated. The example given describes how an attacker can profit by degrading the expected output for users, like Alice, through strategically timed large swaps.
 
-The discussion around the robustness of the price calculation mechanism generated differing opinions. Some argue that since the quoted price is historically averaged, manipulating it is costly and impractical, thereby making the described attack unlikely. Others believe that even with historical averaging, certain attacks remain feasible, emphasizing the need for off-chain slippage calculations to ensure user protection.
+The suggested solution to mitigate this risk involves requiring the users to specify a minimum output amount directly, as opposed to relying on a percentage-based slippage. Furthermore, implementing an off-chain quoting mechanism would allow users to ascertain the minimum acceptable output before executing the transaction, thus offering better protection against sandwich attacks and unexpected slippage. 
+
+Contrary views suggest the slippage mechanism relies on historical price rather than current pool state, thus making immediate manipulation costly and less feasible. However, it’s pointed out that such measures are inadequate since sophisticated manipulation strategies and timing can still allow exploits. Ultimately, ensuring slippage calculations off-chain is recommended to provide robust safeguards for users.
 
 
   **Link**: [Issue #17](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/17)
@@ -58,17 +60,17 @@ The discussion around the robustness of the price calculation mechanism generate
 ## Medium severity issues
 
 
-- **Issue with VoterUpgradeableV1_2.sol Allowing Users to Retain Balances in Both Bribes**
+- **Issue with User Balances Retained in Old and New Bribe Contracts**
 
-  When `setInternalBribeFor` or `setExternalBribeFor` functions in `VoterUpgradeableV1_2.sol` are called, users who have previously voted will retain their balances in the old briber and have them added to the new briber as well. This occurs due to the implementation of `BribeUpgradeable::withdraw`, which doesn't properly handle the balance transfer when the bribe contract is reset. As a result, if an administrator changes a pool's briber, users can recast their votes, leading to them holding balances in both the old and new bribe contracts. This can be mitigated by ensuring that user votes are reallocated to the new bribe contract when changes are made. The issue is acknowledged as valid and significant.
+  When `setInternalBribeFor` or `setExternalBribeFor` in `VoterUpgradeableV1_2.sol` are called, users who have previously voted retain their balances in the old bribe contract while also adding them to the new bribe contract. This occurs because the `BribeUpgradeable::withdraw` implementation does not reset the balances correctly when new bribe contracts are set. In an attack scenario, users can vote again after an admin changes the pool's briber, allowing them to keep their balance in the old briber and add it to the new one. This issue can be mitigated by reallocating user votes to the new bribe contract during the setup of new internal or external bribes, though there is still a potential for error if updates occur in the middle of an epoch.
 
 
   **Link**: [Issue #4](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/4)
 
 
-- **Users May Lose Rewards Voting for Deactivated Gauges Without Revert Notification**
+- **Users Lose Rewards Due to Voting for Deactivated Gauges Without Reverts**
 
-  The problem lies in the governance voting mechanism where `VOTE_DELAY` can be set to its maximum limit. Users may unknowingly vote for gauges that have been killed by governance, and the current checks within the `vote` function fail to revert these votes. As a result, users believe their transactions are successful, but they end up losing rewards for the current epoch due to the vote delay check consistently failing. This oversight allows transactions to proceed without reverting, setting `lastVoted` to the current epoch’s timestamp, which can cause users to miss out on rewards if they vote for deactivated gauges. The attack scenario outlines steps where a user votes, gauges are killed, and subsequent votes don't yield rewards due to the delay.
+  When setting the `VOTE_DELAY` in a voting contract, there's a check to ensure the delay is within the allowed maximum. The `VOTE_DELAY` can be up to one week. During the voting process, if users vote for gauges that have been deactivated by governance, there's no immediate error or revert, setting `lastVoted` to the current epoch start. Subsequent `_voteDelay` checks will then fail, causing users to lose rewards for the current epoch. This issue arises because the contract does not revert transactions when voting for deactivated gauges. In the described attack scenario, users unknowingly vote for killed gauges and fail `_voteDelay` checks, missing out on rewards.
 
 
   **Link**: [Issue #62](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/62)
@@ -76,65 +78,65 @@ The discussion around the robustness of the price calculation mechanism generate
 ## Low severity issues
 
 
-- **Double Increase in `permanentTotalSupply` when `_deposit_for` is Called**
+- **Duplicate Update of `permanentTotalSupply` in `_deposit_for` Boost Condition**
 
-  When functions like `_deposit_for`, `lockPermanent`, `unlockPermanent`, `onAttachToManagedNFT`, and `onDettachFromManagedNFT` are called, the variable `permanentTotalSupply` is updated. If the deposit is boosted, `permanentTotalSupply` could be mistakenly increased twice. Removing the second check of `old_locked.isPermanentLocked` can fix this.
+  When `_deposit_for`, `lockPermanent`, `unlockPermanent`, `onAttachToManagedNFT`, and `onDettachFromManagedNFT` are called, `permanentTotalSupply` is updated. In `_deposit_for`, if `old_locked.isPermanentLocked` is true, it’s checked twice, potentially doubling `permanentTotalSupply`. Removing the second check resolves this issue.
 
 
   **Link**: [Issue #1](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/1)
 
 
-- **Event Emission Issue When Using Indexed Keyword for String Variables**
+- **Using `indexed` Keyword for Strings in Solidity Emits Only Hashes, Not Values**
 
-  When using the `indexed` keyword for reference type variables like strings in the `BaseManagedNFTStrategyUpgradeable` contract, the event returns a hash rather than the actual string. This can cause issues for front-end applications and backend listeners as they will receive an obscure 32-byte hash instead of the expected string value. It is proposed to modify the event definition to exclude the `indexed` keyword for the string variable.
+  Using the `indexed` keyword for reference type variables like dynamic arrays or strings returns their hash, not the actual value. In the `BaseManagedNFTStrategyUpgradeable` contract, this causes the `SetName` event to emit a meaningless 32-byte hash instead of the intended string, potentially causing data loss in DApps.
 
 
   **Link**: [Issue #15](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/15)
 
 
-- **Contract Fails to Emit Events for Team Role Setter Functions**
+- **Missing Event Emissions in Setter Functions for Team Role in Contract**
 
-  When changing the `team` address and functions callable by the `team` role, the contract does not emit events. Emitting events is crucial for transparency and allows off-chain tools to register changes, ensuring users can evaluate the impact on the protocol's trustworthiness and profitability. Recommend emitting events in the specified functions.
+  The contract fails to emit events when changing the `team` address and other related functions. This lack of events prevents off-chain tools from capturing changes, affecting user trust and transparency. Users might exit the protocol, reducing liquidity and harming the protocol's reputation. Emitting events is recommended for transparency.
 
 
   **Link**: [Issue #24](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/24)
 
 
-- **Missing Check in Reset Function May Permit Voting Manipulation During Last Hour**
+- **Missing Vote Window Check in Reset Function Could Allow Vote Manipulation**
 
-  The reset function, meant for abstaining from votes, lacks a crucial check present in the general vote() function. This omission could lead to manipulation in the voting process, especially with tokens holding significant voting power. Although low, the potential for exploitation exists as it may skew voting results significantly.
+  One hour before the end of a voting period, general users are blocked from voting to ensure consistent tallying. However, this restriction is missing for the `reset()` function, potentially allowing manipulation with large-weight tokens. This oversight could impact voting results, though the risk is deemed low.
 
 
   **Link**: [Issue #27](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/27)
 
 
-- **Use SafeERC20Upgradeable and IERC20Upgradeable for upgrade safety in contract**
+- **Current implementation risks when upgrading due to non-upgradeable OpenZeppelin contracts**
 
-  The implementation of `CompoundVeFNXManagedNFTStrategyUpgradeable.sol` uses non-upgradeable OpenZeppelin contracts `SafeERC20` and `IERC20`, which can cause issues during contract upgrades due to delegatecall dependencies. It's recommended to switch to `SafeERC20Upgradeable` and `IERC20Upgradeable` from the @openzeppelin/contracts-upgradeable repository to ensure upgrade safety.
+  The current `CompoundVeFNXManagedNFTStrategyUpgradeable.sol` contract uses non-upgradeable OpenZeppelin `SafeERC20` and `IERC20` libraries, creating potential issues during upgrades due to `delegatecall` dependencies in Address.sol. Switching to `SafeERC20Upgradeable` and `IERC20Upgradeable` from the OpenZeppelin upgradeable repository is recommended for upgrade safety.
 
 
   **Link**: [Issue #31](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/31)
 
 
-- **Incorrect Event Emission in `_setExternalBribes` Function Misleads Observers on Blockchain**
+- **Incorrect Event Logging in `_setExternalBribes` Function Can Mislead Observers**
 
-  The `_setExternalBribes` function incorrectly logs events, using `internal_bribes[_gauge]` instead of `external_bribes[_gauge]`. This misconfiguration can mislead observers about external bribe addresses, affecting blockchain transparency and trust. The issue can be resolved by changing the event emission to correctly use `external_bribes[_gauge]`.
+  The `_setExternalBribes` function incorrectly emits the `SetBribeFor` event, using `internal_bribes[_gauge]` instead of `external_bribes[_gauge]`, potentially misleading blockchain observers about external bribe addresses. Correcting this requires changing the event emission to use `external_bribes[_gauge]`. This change ensures accurate logging and maintains trust and transparency in blockchain operations.
 
 
   **Link**: [Issue #40](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/40)
 
 
-- **Dust Rewards Accumulation Issue Due to Rounding in Rewards Calculation Per Epoch**
+- **Lost Dust Rewards Each Epoch in Rewards Calculation Logic**
 
-  Rewards are calculated based on a token's proportion of total supply, leading to small remainders left in the contract each epoch, often referred to as "dust." Over time, this unclaimed reward can accumulate, especially as the total supply increases. A suggested change involves reallocating these remainders to subsequent epochs to ensure fair distribution.
+  The rewards calculation mechanism results in small leftover amounts ("dust rewards") being left in the contract after each epoch because rewards are determined based on the proportion of a token's supply. These remainder amounts should either be added to the next epoch or distributed evenly to prevent losses. The smaller the user’s balance and rewards, the higher the chance of these dust rewards being lost. This issue does not lead to significant loss in practice but accumulates over time.
 
 
   **Link**: [Issue #46](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/46)
 
 
-- **Precision Loss in Reward Calculations in SingleTokenVirtualRewarderUpgradeable.sol Affecting Small Balances**
+- **Reward Calculation Function Suffers from Precision Loss Due to Integer Division**
 
-  The reward calculation for users in the `SingleTokenVirtualRewarderUpgradeable.sol` contract suffers from precision loss due to integer division. This can result in zero rewards for users with smaller balances relative to the total supply, especially as the number of participating users increases. Introducing a scaling factor can maintain precision and ensure fair reward distribution.
+  Rounding errors in reward calculations occur when the denominator exceeds the numerator, leading to zero rewards for some users in an epoch. This impacts users with smaller balances, resulting in no fractional rewards. Introducing a scaling factor for calculations can mitigate this by maintaining precision and ensuring fair reward distribution.
 
 
   **Link**: [Issue #58](https://github.com/hats-finance/Fenix--0x9d7765a7ebd5b6322a30797a44a5428531970d3d/issues/58)
@@ -143,7 +145,7 @@ The discussion around the robustness of the price calculation mechanism generate
 
 ## Conclusion
 
-The Hats Audit Competition for Fenix on Hats.finance demonstrates a decentralized, results-driven approach to securing web3 projects through collective expertise. Over 12 days, 64 submissions were evaluated, culminating in a $17,000 payout among 12 participants. The audit scope included various smart contracts within Fenix's ecosystem. Key findings reveal significant vulnerabilities, such as a flawed slippage protection in the `buybackTokenByV2()` function, exposing users to sandwich attacks. Medium-severity issues include improper balance transfers in `VoterUpgradeableV1_2.sol`, potentially causing users to lose rewards or retain balances in old bribe contracts. Low-severity issues range from improper event emissions and double incrementing `permanentTotalSupply` to precision loss in reward calculations. The competition effectively identified and recommended fixes for these issues, reinforcing Hats Finance’s commitment to enhancing decentralized security in the web3 space.
+The Fenix audit competition on Hats.finance successfully demonstrated the platform's ability to leverage decentralized, competitive auditing to enhance the security of Web3 projects. By utilizing a decentralized model, Hats.finance attracted numerous skilled auditors who identified critical vulnerabilities within Fenix's smart contracts, distributing a total reward of $17,000 among 12 participants for their findings. The primary high-severity issue focused on a vulnerability in the `buybackTokenByV2()` function of the `SingelTokenBuybackUpgradeable` contract, which exposed users to sandwich attacks. Medium severity issues included retaining user balances in old and new bribe contracts and the loss of rewards caused by voting for deactivated gauges without immediate reverts. Several low-severity issues were addressed as well, ranging from redundant updates and incorrect event logging to reward calculation precisions. The detailed findings highlight the efficient vulnerability identification and cost-effective nature of audit competitions, reinforcing Hats.finance’s commitment to improving decentralized security for Web3 ecosystems.
 
 ## Disclaimer
 
